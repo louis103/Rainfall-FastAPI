@@ -175,10 +175,10 @@ def get_arima_order(df):
     is_seasonal = has_seasonality(df)
     if is_seasonal:  # we have seasonality in data
         # get the best parameters to train the ARIMA model
-        arima_model = auto_arima(df, seasonal=True, test='adf', error_action='ignore', suppress_warnings=True, stepwise=True, trace=True)
+        arima_model = auto_arima(df, seasonal=True, test='adf')
     else:
         # get the best parameters to train the ARIMA model
-        arima_model = auto_arima(df, seasonal=False, test='adf', error_action='ignore', suppress_warnings=True, stepwise=True, trace=True)
+        arima_model = auto_arima(df, seasonal=False, test='adf')
 
     # return the best ARIMA parameters to fit the data
     return arima_model.order
