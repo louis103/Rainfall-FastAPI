@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 # Initialize the fastAPI
 app = FastAPI(
     title="Weather API",
-    description="An Api that generates rainfall forecasts based on user Geo-Location",
+    description="An Api that generates rainfall forecasts based on user location",
     version="0.1.0",
     openapi_url="/api/v0.1.1/openapi.json",
 )
@@ -64,7 +64,7 @@ async def get_coordinates(
 ):
     dataframe = get_csv_by_coordinates(latitude, longitude)
     # run the forecasts
-    forecast_data = run_model(dataframe, n_forecasts=30)
+    forecast_data = run_model(dataframe, latitude, longitude, n_forecasts=28)
     return forecast_data
 
 
@@ -140,7 +140,7 @@ def has_seasonality(dataframe):
 
 
 # Using the prepared data, apply ARIMA and return 28 precipitation day forecasts
-def run_model(dataframe, n_forecasts=28):
+def run_model(dataframe, latitude, longitude, n_forecasts=28):
     """
     Receive the processed dataframe,
     feed it to ARIMA,
@@ -166,6 +166,7 @@ def run_model(dataframe, n_forecasts=28):
     forecast_dict = {
         "daily_forecasts": {"date": dates, "forecasts": forecast_data_values},
         "weekly_analysis": weekly_analysis,
+        "coordinates": [latitude, longitude],
     }
 
     return JSONResponse(forecast_dict, status_code=status.HTTP_200_OK)
