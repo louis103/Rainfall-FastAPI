@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pmdarima import auto_arima
 from statsmodels.tsa.stattools import adfuller, kpss
@@ -12,12 +12,13 @@ from datetime import timedelta
 import numpy as np
 import statsmodels.api as sm
 import json
+from fastapi.responses import JSONResponse
 
 
 # Initialize the fastAPI
 app = FastAPI(
     title="Weather API",
-    description="An Api that generates rainfall forecasts based on user location",
+    description="An Api that generates rainfall forecasts based on user Geo-Location",
     version="0.1.0",
     openapi_url="/api/v0.1.1/openapi.json",
 )
@@ -41,13 +42,13 @@ def getToday():
 
 
 # initialize today's date
-today = getToday()  # eg. 20230913
+today = getToday()  # 20230913
 
 # Define the NASA Power API URL template with placeholders for latitude and longitude
-# Only select the precipitation data for a region lat,long
-NASA_POWER_API_URL = "https://power.larc.nasa.gov/api/temporal/daily/point?start=20100101&end={today}&latitude={latitude}&longitude={longitude}&parameters=PRECTOTCORR&community=AG&header=false&format=csv"
+NASA_POWER_API_URL = "https://power.larc.nasa.gov/api/temporal/daily/point?start=20130101&end={today}&latitude={latitude}&longitude={longitude}&parameters=PRECTOTCORR&community=AG&header=false&format=csv"
 
 
+# T2M,PS,WS10M,QV2M,
 # Home route
 @app.get("/")
 async def home():
@@ -55,6 +56,7 @@ async def home():
 
 
 # Main API route -> http://localhost:8000/get_forecast/?latitude=-1.2345&longitude=36.67845
+# Production URL -> https://rainfall-forecasting-api.azurewebsites.net/get_forecast/?latitude=-1.2345&longitude=36.67845
 @app.get("/get_forecast/")
 async def get_coordinates(
     latitude: float = Query(..., description="Latitude"),
@@ -62,7 +64,7 @@ async def get_coordinates(
 ):
     dataframe = get_csv_by_coordinates(latitude, longitude)
     # run the forecasts
-    forecast_data = run_model(dataframe, n_forecasts=28)
+    forecast_data = run_model(dataframe, n_forecasts=30)
     return forecast_data
 
 
@@ -82,7 +84,10 @@ def get_csv_by_coordinates(latitude: float, longitude: float):
         skipinitialspace=True,
         index_col=0,
     )
-    # rename columns
+    # rename columns"T2M": "Temp2M",
+    # "PS": "SurfacePressure",
+    # "WS10M": "windspeed10M",
+    # "QV2M": "Humidity2M",
     df.rename(
         columns={
             "PRECTOTCORR": "precipitation",
@@ -148,16 +153,14 @@ def run_model(dataframe, n_forecasts=28):
 
     # get the future 28 days for forecasting and convert them to JSON.
     forecast_values = model.forecast(steps=n_forecasts)
-    weekly_analysis = analyze_weekly_forecasts(
-        forecast_values
-    )  # get the weekly analysis from the forecasts
-
+    # get the weekly analysis from the forecasts
+    weekly_analysis = analyze_weekly_forecasts(forecast_values)
     forecast_json = forecast_values.to_json(date_format="iso", orient="split")
     parsed_json = json.loads(forecast_json)
 
     # Process the dates to remove milliseconds and store in a new list
     dates = [date.split("T")[0] for date in parsed_json["index"]]
-    forecast_data_values = parsed_json["data"]
+    forecast_data_values = [round(x, 2) for x in parsed_json["data"]]
 
     # Create a dictionary in the desired format
     forecast_dict = {
@@ -165,20 +168,15 @@ def run_model(dataframe, n_forecasts=28):
         "weekly_analysis": weekly_analysis,
     }
 
-    # Convert the dictionary to a JSON string
-    forecasts = json.dumps(forecast_dict, indent=4, ensure_ascii=False)
-
-    return forecasts
+    return JSONResponse(forecast_dict, status_code=status.HTTP_200_OK)
 
 
 def get_arima_order(df):
     is_seasonal = has_seasonality(df)
-    if is_seasonal:  # we have seasonality in data
-        # get the best parameters to train the ARIMA model
-        arima_model = auto_arima(df, seasonal=True, test='adf')
+    if is_seasonal:  # we have seasonality in data #stationary="adfuller"
+        arima_model = auto_arima(df, seasonal=True)  # test="adf"
     else:
-        # get the best parameters to train the ARIMA model
-        arima_model = auto_arima(df, seasonal=False, test='adf')
+        arima_model = auto_arima(df, seasonal=False)
 
     # return the best ARIMA parameters to fit the data
     return arima_model.order
@@ -195,6 +193,7 @@ def generate_future_dates(df):
 def analyze_weekly_forecasts(forecast_series):
     # Initialize the weekly analysis dictionary
     weekly_analysis = {}
+    total_monthly_rainfall = 0
 
     # Calculate the number of weeks (assuming 7 days per week)
     num_weeks = len(forecast_series) // 7
@@ -204,27 +203,29 @@ def analyze_weekly_forecasts(forecast_series):
         week_end = forecast_series.index[7 * week_number - 1]
 
         # Calculate the total precipitation for the week
-        total_precipitation = forecast_series[week_start:week_end].sum()
+        total_precipitation = round(forecast_series[week_start:week_end].sum(), 2)
 
         # Calculate the mean daily precipitation for the week
-        mean_daily_precipitation = forecast_series[week_start:week_end].mean()
+        mean_daily_precipitation = round(forecast_series[week_start:week_end].mean(), 2)
+
+        total_monthly_rainfall += total_precipitation
 
         # Determine the recommendation based on the comparison to the 28-day mean
         # Determine the recommendation based on the comparison to different ranges
-        if mean_daily_precipitation < 10:
+        if mean_daily_precipitation < 4:
             recommendation = "Very Very Tiny Rains"
-        elif 10 <= mean_daily_precipitation < 20:
+        elif 4 <= mean_daily_precipitation < 10:
             recommendation = "Very Tiny Rains"
-        elif 20 <= mean_daily_precipitation < 30:
+        elif 10 <= mean_daily_precipitation < 15:
             recommendation = "Tiny Rains"
-        elif 30 <= mean_daily_precipitation < 40:
+        elif 15 <= mean_daily_precipitation < 20:
             recommendation = "Light Rains"
-        elif 40 <= mean_daily_precipitation < 50:
+        elif 20 <= mean_daily_precipitation < 30:
             recommendation = "Moderate Rains"
-        elif 50 <= mean_daily_precipitation < 60:
+        elif 30 <= mean_daily_precipitation < 60:
             recommendation = "Heavy Rains"
         else:
-            recommendation = "Very Very High Rains"
+            recommendation = "Very Very Heavy Rains"
 
         week_name = f"Week {week_number} {week_start.strftime('%Y-%m-%d')}"
         week_data = {
@@ -234,5 +235,6 @@ def analyze_weekly_forecasts(forecast_series):
         }
 
         weekly_analysis[week_name] = week_data
+    weekly_analysis["cummulative_sum"] = total_monthly_rainfall
 
     return weekly_analysis
