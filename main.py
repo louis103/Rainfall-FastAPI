@@ -41,10 +41,11 @@ def getToday():
 
 
 # initialize today's date
-today = getToday()  # 20230913
+today = getToday()  # eg. 20230913
 
 # Define the NASA Power API URL template with placeholders for latitude and longitude
-NASA_POWER_API_URL = "https://power.larc.nasa.gov/api/temporal/daily/point?start=20100101&end={today}&latitude={latitude}&longitude={longitude}&parameters=T2M,PS,WS10M,QV2M,PRECTOTCORR&community=AG&header=false&format=csv"
+# Only select the precipitation data for a region lat,long
+NASA_POWER_API_URL = "https://power.larc.nasa.gov/api/temporal/daily/point?start=20100101&end={today}&latitude={latitude}&longitude={longitude}&parameters=PRECTOTCORR&community=AG&header=false&format=csv"
 
 
 # Home route
@@ -61,7 +62,7 @@ async def get_coordinates(
 ):
     dataframe = get_csv_by_coordinates(latitude, longitude)
     # run the forecasts
-    forecast_data = run_model(dataframe, n_forecasts=30)
+    forecast_data = run_model(dataframe, n_forecasts=28)
     return forecast_data
 
 
@@ -84,10 +85,6 @@ def get_csv_by_coordinates(latitude: float, longitude: float):
     # rename columns
     df.rename(
         columns={
-            "T2M": "Temp2M",
-            "PS": "SurfacePressure",
-            "WS10M": "windspeed10M",
-            "QV2M": "Humidity2M",
             "PRECTOTCORR": "precipitation",
         },
         inplace=True,
@@ -177,9 +174,11 @@ def run_model(dataframe, n_forecasts=28):
 def get_arima_order(df):
     is_seasonal = has_seasonality(df)
     if is_seasonal:  # we have seasonality in data
-        arima_model = auto_arima(df, seasonal=True)
+        # get the best parameters to train the ARIMA model
+        arima_model = auto_arima(df, seasonal=True, test='adf', error_action='ignore', suppress_warnings=True, stepwise=True, trace=True)
     else:
-        arima_model = auto_arima(df, seasonal=False)
+        # get the best parameters to train the ARIMA model
+        arima_model = auto_arima(df, seasonal=False, test='adf', error_action='ignore', suppress_warnings=True, stepwise=True, trace=True)
 
     # return the best ARIMA parameters to fit the data
     return arima_model.order
